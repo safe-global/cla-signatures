@@ -1,2 +1,2 @@
 # cla-signatures
-CLA signatures repository
+This repository stores CLA signatures for other repositories in the Safe organization.
