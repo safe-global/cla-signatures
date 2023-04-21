@@ -215,6 +215,14 @@
       "created_at": "2023-04-19T19:04:03Z",
       "repoId": 481196344,
       "pullRequestNo": 1889
+    },
+    {
+      "name": "liliya-soroka",
+      "id": 338622,
+      "comment_id": 1517947002,
+      "created_at": "2023-04-21T14:46:16Z",
+      "repoId": 481196344,
+      "pullRequestNo": 1895
     }
   ]
 }
