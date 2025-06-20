@@ -1279,6 +1279,14 @@
       "created_at": "2025-06-19T12:29:55Z",
       "repoId": 238713240,
       "pullRequestNo": 855
+    },
+    {
+      "name": "daenamkim",
+      "id": 16159767,
+      "comment_id": 2976829322,
+      "created_at": "2025-06-16T14:13:50Z",
+      "repoId": 337806885,
+      "pullRequestNo": 1226
     }
   ]
 }
