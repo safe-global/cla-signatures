@@ -1,0 +1,44 @@
+name: Sync CLA Signatures to Main
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Every Monday at 9am UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check for pending signatures
+        id: check
+        run: |
+          AHEAD=$(gh api repos/safe-global/cla-signatures/compare/main...signatures \
+            --jq '.ahead_by' 2>/dev/null || echo "0")
+          echo "ahead_by=$AHEAD" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create PR for pending signatures
+        if: steps.check.outputs.ahead_by != '0'
+        run: |
+          EXISTING=$(gh pr list \
+            --repo safe-global/cla-signatures \
+            --head signatures \
+            --base main \
+            --json number \
+            --jq '.[0].number')
+          if [ -z "$EXISTING" ]; then
+            gh pr create \
+              --repo safe-global/cla-signatures \
+              --base main \
+              --head signatures \
+              --title "chore: Merge pending CLA signatures" \
+              --body "${{ steps.check.outputs.ahead_by }} signature(s) pending review.\n\ncc @safe-global/platform-team"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
