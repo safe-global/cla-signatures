@@ -7,38 +7,64 @@ on:
 
 permissions: {}
 
+# The CLA bot writes to the `signatures` branch, which is the source of truth. Main only allows
+# squash merges (enterprise ruleset), so instead of a signatures -> main PR (which drifts after every
+# squash), this copies signatures' cla.json onto a branch cut from main and opens a PR from it.
 jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
+    env:
+      REPO: safe-global/cla-signatures
+      FILE: signatures/version1/cla.json
+      SYNC_BRANCH: sync/cla-signatures
     steps:
-      - name: Check for pending signatures
-        id: check
-        run: |
-          AHEAD=$(gh api repos/safe-global/cla-signatures/compare/main...signatures \
-            --jq '.ahead_by' 2>/dev/null || echo "0")
-          echo "ahead_by=$AHEAD" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GITHUB_TOKEN can't open PRs (org setting can_approve_pull_request_reviews: false, kept off on
+      # purpose). The safe-cla-bot App is installed only on this repo, and its API commits are signed
+      # by GitHub, which the enterprise signed-commits ruleset requires.
+      - name: Mint safe-cla-bot token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.CLA_APP_ID }}
+          private-key: ${{ secrets.CLA_APP_PRIVATE_KEY }}
+          owner: safe-global
+          repositories: cla-signatures
+          permission-contents: write
+          permission-pull-requests: write
 
-      - name: Create PR for pending signatures
-        if: steps.check.outputs.ahead_by != '0'
-        run: |
-          EXISTING=$(gh pr list \
-            --repo safe-global/cla-signatures \
-            --head signatures \
-            --base main \
-            --json number \
-            --jq '.[0].number')
-          if [ -z "$EXISTING" ]; then
-            gh pr create \
-              --repo safe-global/cla-signatures \
-              --base main \
-              --head signatures \
-              --title "chore: Merge pending CLA signatures" \
-              --body "${{ steps.check.outputs.ahead_by }} signature(s) pending review.\n\ncc @safe-global/platform-team"
-          fi
+      - name: Open or refresh the sync PR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          SIG_BLOB=$(gh api "repos/$REPO/contents/$FILE?ref=signatures" --jq .sha)
+          MAIN_BLOB=$(gh api "repos/$REPO/contents/$FILE?ref=main" --jq .sha)
+          if [ "$SIG_BLOB" = "$MAIN_BLOB" ]; then
+            echo "main already has every signature"
+            exit 0
+          fi
+
+          # Reset the sync branch to main, then put signatures' cla.json on top in one commit.
+          MAIN_HEAD=$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)
+          if gh api "repos/$REPO/git/ref/heads/$SYNC_BRANCH" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/heads/$SYNC_BRANCH" -f sha="$MAIN_HEAD" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$SYNC_BRANCH" -f sha="$MAIN_HEAD" >/dev/null
+          fi
+          gh api "repos/$REPO/contents/$FILE?ref=signatures" --jq .content | tr -d '\n' > content.b64
+          jq -n --rawfile content content.b64 --arg sha "$MAIN_BLOB" --arg branch "$SYNC_BRANCH" \
+            '{message: "chore: Sync CLA signatures from the signatures branch", content: $content, sha: $sha, branch: $branch}' \
+            | gh api -X PUT "repos/$REPO/contents/$FILE" --input - >/dev/null
+
+          NEW=$(( $(gh api "repos/$REPO/contents/$FILE?ref=signatures" --jq .content | base64 -d | jq '.signedContributors|length') \
+                - $(gh api "repos/$REPO/contents/$FILE?ref=main" --jq .content | base64 -d | jq '.signedContributors|length') ))
+          EXISTING=$(gh pr list --repo "$REPO" --head "$SYNC_BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -z "$EXISTING" ]; then
+            gh pr create --repo "$REPO" --base main --head "$SYNC_BRANCH" \
+              --title "chore: Merge pending CLA signatures" \
+              --body "$(printf '%s new CLA signature(s) from the `signatures` branch pending review.\n\ncc @safe-global/platform-team' "$NEW")"
+          else
+            echo "Refreshed existing PR #$EXISTING ($NEW new signature(s))"
+          fi
