@@ -12,16 +12,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
+      # GITHUB_TOKEN can't open PRs (org setting can_approve_pull_request_reviews: false, kept off on
+      # purpose), so the PR is opened by the safe-cla-bot App, which is installed only on this repo.
+      - name: Mint safe-cla-bot token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.CLA_APP_ID }}
+          private-key: ${{ secrets.CLA_APP_PRIVATE_KEY }}
+          owner: safe-global
+          repositories: cla-signatures
+          permission-contents: read
+          permission-pull-requests: write
+
       - name: Check for pending signatures
         id: check
         run: |
-          AHEAD=$(gh api repos/safe-global/cla-signatures/compare/main...signatures \
-            --jq '.ahead_by' 2>/dev/null || echo "0")
+          AHEAD=$(gh api repos/safe-global/cla-signatures/compare/main...signatures --jq '.ahead_by')
           echo "ahead_by=$AHEAD" >> "$GITHUB_OUTPUT"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Create PR for pending signatures
         if: steps.check.outputs.ahead_by != '0'
@@ -38,7 +49,13 @@ jobs:
               --base main \
               --head signatures \
               --title "chore: Merge pending CLA signatures" \
-              --body "${{ steps.check.outputs.ahead_by }} signature(s) pending review.\n\ncc @safe-global/platform-team"
+              --body "$BODY"
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BODY: |
+            ${{ steps.check.outputs.ahead_by }} commit(s) with new CLA signatures pending review.
+
+            Merge with **Create a merge commit**. Squash and rebase rewrite the commits and leave `signatures` behind `main`.
+
+            cc @safe-global/platform-team
